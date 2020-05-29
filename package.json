@@ -27,6 +27,7 @@
     "@react-native-community/cli": "^4.9.0",
     "commander": "^5.1.0",
     "compare-versions": "^3.6.0",
+    "node-downloader-helper": "^1.0.13",
     "progress": "^2.0.3"
   },
   "engines": {

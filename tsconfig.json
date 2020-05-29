@@ -3,11 +3,9 @@
     "module": "commonjs",
     "target": "es2017",
     "sourceMap": true,
-    "outDir": "./lib",
     "baseUrl": "./src",
-    "paths": {
-      "*": ["src/*"]
-    },
+    "outDir": "./lib",
+    "rootDir": "./src",
     "esModuleInterop": true,
     "declaration": true,
     "resolveJsonModule": true,

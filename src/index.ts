@@ -1,12 +1,12 @@
 import program from 'commander';
-import packageJson from '../package.json';
+const { version: cliVersion } = require('../package.json');
 import { Octokit } from '@octokit/rest';
 import compareVersions from 'compare-versions';
 
 import fs from 'fs';
 import os, { homedir } from 'os';
 import ProgressBar from 'progress';
-import https from 'https';
+const { DownloaderHelper } = require('node-downloader-helper');
 
 const octokit = new Octokit();
 async function getTags() {
@@ -27,46 +27,56 @@ async function getTags() {
 }
 
 const baseDir = `${os.homedir()}/.rncn`;
-fs.mkdir(baseDir, { recursive: true }, (e) => {});
-function download(url, fn) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url);
-    req
-      .on('response', function (res) {
-        if (res.statusCode === 404) {
-          fs.unlink(fn, () => {});
-          resolve('done');
-        }
-        res.pipe(fs.createWriteStream(fn));
-        const len = parseInt(res.headers['content-length'], 10);
-        console.log();
-        let bar = new ProgressBar(
-          `  Downloading ${fn}  [:bar] :rate/bps :percent :etas`,
-          {
-            complete: '=',
-            incomplete: ' ',
-            width: 20,
-            total: len,
-          },
-        );
+fs.mkdir(baseDir, (e) => {});
 
-        res.on('data', function (chunk) {
-          bar.tick(chunk.length);
-        });
+function download(url, dir) {
+  const dl = new DownloaderHelper(url, dir, {
+    retry: { maxRetries: 3 },
+  });
+  let bar;
 
-        res.on('end', resolve);
-      })
-      .on('error', reject);
-    req.end();
+  dl.on('download', ({ fileName, totalSize }) => {
+    if (!bar) {
+      bar = new ProgressBar(`  Downloading ${fileName}  [:bar] :percent`, {
+        complete: '=',
+        incomplete: ' ',
+        width: 20,
+        total: totalSize,
+      });
+    }
+  });
+
+  dl.on('progress.throttled', (info) => {
+    bar.tick(info.downloaded);
+  });
+
+  dl.on('error', (e) => {});
+
+  return dl.start().catch((e) => {
+    if (e.status === 404) {
+      return 'done';
+    } else {
+      throw e;
+    }
   });
 }
 // https://cdn.jsdelivr.net/gh/reactnativecn/rnpack@0.62.2/rncn.zip
 const baseUrl = 'https://cdn.jsdelivr.net/gh/reactnativecn/rnpack@';
 const baseFn = 'rncn';
+function emptyDir(dir) {
+  return new Promise((resolve) => {
+    fs.rmdir(dir, { recursive: true }, () => {
+      fs.mkdir(dir, resolve);
+    });
+  });
+}
 async function dowloadSegments(version) {
   const url = baseUrl + version;
+  const dlDir = `${baseDir}/${version}`;
+  await emptyDir(dlDir);
+
   try {
-    await download(`${url}/${baseFn}.zip`, `${version}/${baseFn}.zip`);
+    await download(`${url}/${baseFn}.zip`, dlDir);
     let index = 1;
     let ret;
     let filename;
@@ -76,23 +86,29 @@ async function dowloadSegments(version) {
       } else {
         filename = `${baseFn}.z${index}`;
       }
-      ret = await download(`${url}/${filename}`, `${version}/${filename}`);
+      ret = await download(`${url}/${filename}`, dlDir);
       index++;
     }
   } catch (e) {
     fs.unlink(`${homedir}/${version}`, () => {});
     throw new Error(`下载时遇到错误： ${e.message}`);
   }
+  fs.writeFileSync(`${dlDir}/done`, '');
 }
 
 program.storeOptionsAsProperties(false);
-program.version(packageJson.version, '-v');
+program.version(cliVersion, '-v');
+
+const log = console.log;
 
 program
   .command('init <projectName>')
   .description('创建一个react native项目')
   .option('--version <version>', '指定react native版本')
   .action(async (projectName) => {
+    log(`欢迎使用reactnative.cn提供的快速初始化工具`);
+    log(`rncn-cli v${cliVersion}`);
+    log('-------------------------------------');
     const tags = await getTags();
     let version = program.opts().version || tags[0];
     if (!tags.includes(version)) {
@@ -100,12 +116,16 @@ program
         `仓库中无此版本(${version})，请从库存版本中选择:\n` + tags.join(', '),
       );
     }
-    const targetZip = `${baseDir}/${version}/${baseFn}.zip`;
-    if (!fs.existsSync(targetZip)) {
+    log('react-native 版本: ' + version);
+    if (!fs.existsSync(`${baseDir}/${version}/done`)) {
+      log('开始下载模板包...');
       await dowloadSegments(version);
+    } else {
+      log(`检测到缓存，通过缓存创建...`);
     }
     // TODO unzip and rename
     // TODO replace gradle and maven
+    // TODO add .npmrc and install
   });
 
 program.parse(process.argv);
